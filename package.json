@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "zip": "rm -f Petanque-Ofer-60-source.zip && zip -rq Petanque-Ofer-60-source.zip index.html package.json package-lock.json vite.config.js README.md .gitignore Build-and-Share.command Build-and-Share.bat src tests -x \"*.DS_Store\"",
-    "package": "vite build && cp dist/index.html Petanque-Ofer-60.html",
+    "package": "vite build && cp dist/index.html Petanque-Ofer-60.html && mkdir -p docs && cp dist/index.html docs/index.html",
     "release": "npm run package && npm run zip"
   },
   "dependencies": {
