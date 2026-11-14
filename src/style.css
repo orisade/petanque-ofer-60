@@ -4,7 +4,13 @@ body {
   font-family: Georgia, 'Times New Roman', serif;
   overflow: hidden;
   background: #1a1510;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
+
+#scene { touch-action: none; }
 
 #app, #scene { position: fixed; inset: 0; width: 100%; height: 100%; }
 
@@ -213,6 +219,16 @@ body {
   from { box-shadow: 0 0 4px rgba(127, 232, 138, 0.5); }
   to { box-shadow: 0 0 22px rgba(127, 232, 138, 1); }
 }
+#perk-bar button.perk-toggle {
+  align-self: flex-end;
+  flex-direction: row;
+  font-size: 0.82rem; padding: 6px 12px;
+  background: rgba(122, 92, 30, 0.9); color: #f7f0e3;
+  border: 1px solid #e8c766; border-radius: 999px;
+  cursor: pointer; max-width: none;
+}
+#perk-bar button.perk-toggle:hover { background: rgba(160, 120, 40, 0.95); }
+
 #perk-bar button.perk-locked {
   padding: 5px 12px;
   opacity: 0.82;
@@ -255,4 +271,116 @@ body {
   color: #e8c766; font-size: 1.3rem; font-weight: bold;
   text-shadow: 0 2px 6px rgba(0,0,0,0.8);
   white-space: nowrap;
+}
+
+/* ---------------- Phones and small screens ---------------- */
+@media (max-width: 760px), (max-height: 520px) {
+  .panel {
+    padding: 20px 18px;
+    max-width: 94vw;
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+  .panel h1 { font-size: 1.5rem; }
+  .panel h2 { font-size: 1.15rem; }
+  .panel .subtitle { margin-bottom: 14px; font-size: 0.9rem; }
+  .panel .rosters { font-size: 0.8rem; }
+  .panel .hint { font-size: 0.75rem; }
+  .panel button { font-size: 1.05rem; padding: 12px 26px; }
+  #trivia-answers, #disguise-options { grid-template-columns: 1fr; gap: 7px; }
+  #trivia-answers button, #disguise-options button { font-size: 0.92rem; padding: 11px 9px; }
+  #trivia-question { font-size: 1.05rem; }
+  #trivia-image { max-height: 30vh; }
+
+  #scoreboard {
+    top: calc(6px + env(safe-area-inset-top));
+    font-size: 0.74rem; padding: 4px 9px; gap: 6px;
+    max-width: 98vw; flex-wrap: nowrap;
+  }
+  #scoreboard .team { white-space: nowrap; }
+  #scoreboard .pts { margin-left: 4px; }
+  #scoreboard .tokens { font-size: 0.62rem; margin-left: 3px; }
+  #holding {
+    top: calc(38px + env(safe-area-inset-top));
+    font-size: 0.78rem; padding: 2px 9px; gap: 5px;
+  }
+  #holding .cm { display: none; }
+  #turn-banner {
+    top: calc(64px + env(safe-area-inset-top));
+    font-size: 0.8rem; padding: 3px 10px;
+    max-width: 92vw; text-align: center;
+  }
+
+  /* who-throws list becomes a thumb-friendly row */
+  #player-picker {
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%);
+    flex-direction: row; flex-wrap: wrap;
+    justify-content: center; gap: 5px;
+    max-width: 94vw;
+  }
+  #player-picker .picker-label { display: none; }
+  #player-picker button { font-size: 0.85rem; padding: 7px 11px; }
+
+  #boules-left { display: none; }
+
+  #arc-panel {
+    bottom: calc(52px + env(safe-area-inset-bottom));
+    gap: 6px; padding: 3px 8px;
+  }
+  #arc-gauge { width: 92px; height: 54px; }
+  #arc-label { font-size: 0.75rem; }
+
+  #power-bar {
+    bottom: calc(22px + env(safe-area-inset-bottom));
+    width: 58vw; height: 14px;
+  }
+  #message {
+    bottom: calc(142px + env(safe-area-inset-bottom));
+    font-size: 0.95rem; max-width: 92vw;
+    white-space: normal; text-align: center;
+  }
+  #bigshout { font-size: 2.2rem; }
+
+  /* perks: ready ones stack above the thumb, chip last */
+  #perk-bar {
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    gap: 5px; align-items: flex-end;
+  }
+  #perk-bar button { max-width: 74vw; }
+  #perk-bar .perk-title { font-size: 0.85rem; }
+  #perk-bar .perk-sub { font-size: 0.66rem; }
+  #perk-bar button.perk-toggle { font-size: 0.78rem; padding: 7px 13px; }
+
+  #crosshair::after { width: 150px; height: 150px; }
+}
+
+/* very short landscape (phone held sideways) */
+@media (max-height: 460px) {
+  #message { bottom: 128px; font-size: 0.85rem; }
+  #arc-gauge { width: 76px; height: 44px; }
+  #perk-bar { bottom: 84px; }
+}
+
+/* expanded perk list becomes a scrollable bottom sheet on phones */
+@media (max-width: 760px), (max-height: 520px) {
+  #perk-bar.open {
+    left: 0; right: 0; bottom: 0;
+    align-items: stretch;
+    max-height: 62vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: rgba(16, 12, 6, 0.95);
+    border-top: 2px solid rgba(232, 199, 102, 0.5);
+    border-radius: 14px 14px 0 0;
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
+    gap: 7px;
+  }
+  #perk-bar.open button { max-width: none; }
+  #perk-bar.open button.perk-toggle {
+    align-self: center;
+    position: sticky; bottom: 0;
+    margin-top: 2px;
+  }
 }

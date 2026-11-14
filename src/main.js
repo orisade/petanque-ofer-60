@@ -67,8 +67,18 @@ camera.position.copy(CAMS.near.pos);
 camera.lookAt(camLook);
 
 function resize() {
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const w = window.innerWidth, h = window.innerHeight;
+  const small = Math.min(w, h) < 620;
+  // lighter on phones
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, small ? 1.6 : 2));
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  // keep roughly the same width of court in view on a tall phone screen
+  const base = 55;
+  camera.fov = camera.aspect < 1
+    ? THREE.MathUtils.clamp(2 * THREE.MathUtils.radToDeg(
+        Math.atan(Math.tan(THREE.MathUtils.degToRad(base) / 2) / camera.aspect)), base, 86)
+    : base;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
@@ -1122,6 +1132,7 @@ const game = {
 window.__game = game; // test hook
 window.__questions = QUESTIONS;
 window.__balls = balls;
+window.__camFov = () => camera.fov;
 window.__refresh = () => updateHUD();
 window.__aimAt = (x, z) => { game.aimPoint.set(x, 0, z); reticle.position.set(x, 0.015, z); };
 
@@ -1377,7 +1388,14 @@ function updatePerkBar() {
   const bar = $('perk-bar');
   bar.innerHTML = '';
   if (game.phase === 'start') return;
-  for (const perk of PERKS) {
+
+  // By default only perks you can actually fire right now are shown, so the
+  // screen stays clear (and fits a phone). The chip opens the full list.
+  const ready = PERKS.filter((p) => chargesOf(p) > 0 && p.usable());
+  const owned = PERKS.reduce((a, p) => a + chargesOf(p), 0);
+  const list = game.perksOpen ? PERKS : ready;
+
+  for (const perk of list) {
     const team = perkTeam(perk);
     const n = chargesOf(perk);
     const ready = n > 0 && perk.usable();
@@ -1396,10 +1414,24 @@ function updatePerkBar() {
       perk.activate();
       // the borrowed perk is spent — Gali takes the mask off again
       if (borrowed) removeMask();
+      game.perksOpen = false;
       updateHUD();
     };
     bar.appendChild(b);
   }
+
+  const chip = document.createElement('button');
+  chip.className = 'perk-toggle';
+  bar.classList.toggle('open', !!game.perksOpen);
+  chip.textContent = game.perksOpen
+    ? '✕ close perks'
+    : `🎁 perks${owned ? ` ×${owned}` : ''}${ready.length ? '' : ' — none ready'}`;
+  chip.onclick = (e) => {
+    e.stopPropagation();
+    game.perksOpen = !game.perksOpen;
+    updatePerkBar();
+  };
+  bar.appendChild(chip);
 }
 
 // Characters walk to the circle on their turn
@@ -1884,7 +1916,10 @@ $('start-btn').onclick = () => {
   hide('start-screen');
   show('hud');
   startEnd(Math.round(Math.random()));
-  setMessage('Hold the mouse button to charge power, release to throw!', 4000);
+  const touch = matchMedia('(hover: none)').matches;
+  setMessage(touch
+    ? 'Touch and hold to charge, drag to aim, lift to throw!'
+    : 'Hold the mouse button to charge power, release to throw!', 5000);
 };
 
 // ---------- Main loop ----------
