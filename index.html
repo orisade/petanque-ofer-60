@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pétanque — Joyeux Anniversaire!</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎉</text></svg>" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+
+    <!-- Start screen -->
+    <div id="start-screen" class="overlay">
+      <div class="panel">
+        <h1>🎉 Pétanque Ofer 60 🎉</h1>
+        <p class="subtitle">Un jeu pour Ofer</p>
+        <label>Team 1 <input id="team1-name" value="Team Ofer" maxlength="20" /></label>
+        <label>Team 2 <input id="team2-name" value="Team Shani" maxlength="20" /></label>
+        <p class="rosters">⚪ Ofer · Mom · Yariv · Eden &nbsp;&nbsp;vs&nbsp;&nbsp; 🟤 Shani · Gali · Ori · Happy 🐕</p>
+        <label class="test-toggle"><input type="checkbox" id="test-mode" /> 🧪 Test mode — start with every perk ready</label>
+        <button id="start-btn">Jouer !</button>
+        <p class="hint">First to 13 points wins. Aim with the mouse, hold to charge, release to throw.<br/>
+        Win trivia between ends to earn 🎁 perk tokens: Yariv's tsiktsuk, Happy's hole, Eden's twin!</p>
+      </div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div id="scoreboard">
+        <div class="team" id="score-team1"><span class="name"></span><span class="pts">0</span><span class="tokens"></span></div>
+        <div class="vs">–</div>
+        <div class="team" id="score-team2"><span class="name"></span><span class="pts">0</span><span class="tokens"></span></div>
+      </div>
+      <div id="holding" class="hidden"></div>
+      <div id="turn-banner"></div>
+      <div id="boules-left"></div>
+      <div id="player-picker"></div>
+      <div id="arc-panel" title="mouse close to the thrower = high lob that drops short; mouse far up the court = flat throw that carries">
+        <canvas id="arc-gauge" width="132" height="76"></canvas>
+        <span id="arc-label">➿ Half lob 30°</span>
+      </div>
+      <div id="power-bar"><div id="power-fill"></div></div>
+      <div id="message"></div>
+      <div id="perk-bar"></div>
+      <div id="bigshout" class="hidden"></div>
+      <div id="crosshair" class="hidden"></div>
+    </div>
+
+    <!-- Trivia -->
+    <div id="trivia-screen" class="overlay hidden">
+      <div class="panel">
+        <h2 id="trivia-prompt" dir="rtl">שאלה עבור <bdi id="trivia-team"></bdi>!</h2>
+        <img id="trivia-image" class="hidden" alt="" />
+        <p id="trivia-question" dir="auto"></p>
+        <div id="trivia-answers"></div>
+        <p id="trivia-result" class="hidden"></p>
+      </div>
+    </div>
+
+    <!-- Gali's disguise chooser -->
+    <div id="disguise-screen" class="overlay hidden">
+      <div class="panel">
+        <h2>🎭 Whose face will Gali wear?</h2>
+        <p class="subtitle">She gets one use of that player's perk</p>
+        <div id="disguise-options"></div>
+      </div>
+    </div>
+
+    <!-- End of end summary -->
+    <div id="end-screen" class="overlay hidden">
+      <div class="panel">
+        <h2 id="end-title"></h2>
+        <p id="end-detail"></p>
+        <button id="next-end-btn">Continue</button>
+      </div>
+    </div>
+
+    <!-- Victory -->
+    <div id="win-screen" class="overlay hidden">
+      <div class="panel">
+        <h1 id="win-title"></h1>
+        <p id="win-detail"></p>
+        <button id="replay-btn">Rejouer</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

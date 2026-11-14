@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+# build outputs, rebuilt with `npm run release`
+Petanque-Ofer-60.html
+Petanque-Ofer-60-source.zip
+
+# test screenshots
+shot-*.png
+
+.DS_Store
+
+# local Claude Code config / skills
+.claude/

@@ -1,0 +1,25 @@
+import { chromium } from 'playwright';
+const errors = [];
+const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+page.on('pageerror', (e) => errors.push(String(e)));
+await page.goto('http://localhost:5173');
+await page.check('#test-mode');
+await page.click('#start-btn');
+await page.waitForTimeout(400);
+const st = () => page.evaluate(() => window.__game.phase);
+for(let i=0;i<4;i++){ if(!(await page.evaluate(()=>window.__game.throwingJack))) break; await page.mouse.move(640,380); await page.mouse.down(); await page.waitForTimeout(520); await page.mouse.up(); await page.waitForTimeout(2300); }
+const setPlayer = (t,k)=>page.evaluate(([t,k])=>{const g=window.__game;g.current=t;g.currentPlayer=g.teams[t].players.find(p=>p.key===k);g.currentPlayer.thrown=false;g.phase='aim';window.__refresh();},[t,k]);
+const throwIt = async (y=370)=>{await page.mouse.move(640,y);await page.mouse.down();await page.waitForTimeout(470);await page.mouse.up();for(let i=0;i<40;i++){await page.waitForTimeout(250);if(await st()==='aim')return;}};
+await setPlayer(1,'shani'); await throwIt(360);
+await setPlayer(0,'mom'); await throwIt(380);
+const pre = await page.evaluate(()=>window.__balls.filter(b=>!b.magnet).map(b=>({x:+b.body.position.x.toFixed(2),z:+b.body.position.z.toFixed(2)})));
+await setPlayer(1,'ori');
+await page.locator('#perk-bar button.perk-ready',{hasText:'magnet'}).click();
+await throwIt(370);
+await page.waitForTimeout(2800);
+const res = await page.evaluate(()=>{const m=window.__balls.find(b=>b.magnet);return m?window.__balls.filter(b=>b!==m).map(b=>+Math.hypot(b.body.position.x-m.body.position.x,b.body.position.z-m.body.position.z).toFixed(2)):null;});
+console.log('pre-pull positions:', pre);
+console.log('distances from magnet after pull:', res);
+console.log('ERRORS:', errors.length?errors:'none');
+await browser.close();
