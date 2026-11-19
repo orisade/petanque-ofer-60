@@ -59,9 +59,11 @@ scene.fog = new THREE.Fog(0x9fc4e0, 30, 80);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
 const CAMS = {
   near: { pos: new THREE.Vector3(0, 3.8, THROW_Z - 4.2), look: new THREE.Vector3(0, 0, 2) },
+  smash: { pos: new THREE.Vector3(0, 11.5, -16.5), look: new THREE.Vector3(0, 0, 3.5) }, // side-on, sees the far end
   far: { pos: new THREE.Vector3(0, 3.3, 12.4), look: new THREE.Vector3(0, 0.6, -3) },
 };
 let camMode = 'near';
+let camShake = 0;
 const camLook = CAMS.near.look.clone();
 camera.position.copy(CAMS.near.pos);
 camera.lookAt(camLook);
@@ -370,7 +372,7 @@ async function tryPhotoFace(mesh, key, head, opts = {}) {
   } catch { /* no photo yet */ }
 }
 
-function makePerson({ key, name, shirt, photoKey, dot }) {
+function makePerson({ key, name, shirt, photoKey, dot, build }) {
   const g = new THREE.Group();
   const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
 
@@ -394,9 +396,21 @@ function makePerson({ key, name, shirt, photoKey, dot }) {
   const label = nameLabel(name);
   label.position.y = 1.75;
 
+  // body build: w = girth, h = height (watchers are skinny / big)
+  if (build) {
+    const { w = 1, h = 1 } = build;
+    for (const m of [legs, torso, armL, armR]) {
+      m.scale.set(w, h, w);
+      m.position.x *= w;
+      m.position.y *= h;
+    }
+    for (const m of [head, face, label]) m.position.y *= h;
+    head.scale.setScalar(Math.max(0.9, w ** 0.5));
+  }
+
   for (const p of [legs, torso, armL, armR, head]) p.castShadow = true;
   g.add(legs, torso, armL, armR, head, face, label);
-  return { group: g, parts: { armR, head } };
+  return { group: g, parts: { armR, armL, legs, torso, head } };
 }
 
 function makeDog({ key, name }) {
@@ -474,6 +488,19 @@ function dismissAmit() {
   scene.remove(amit);
   amit = null;
 }
+
+// Watchers — stand behind the far wall and cheer; no turns yet (actions TBD)
+const WATCHERS = [
+  { key: 'danny', name: 'Danny', shirt: 0x5a7d3a, build: { w: 0.55, h: 1.12 }, x: -1.3 },     // skinny man
+  { key: 'shoshana', name: 'Shoshana', shirt: 0xd0587a, build: { w: 1.9, h: 0.95 }, x: 1.3 }, // big woman
+];
+const watchers = WATCHERS.map((def) => {
+  const made = makePerson(def);
+  made.group.position.set(def.x, 0, COURT.length / 2 + 1.1);
+  made.group.rotation.y = Math.PI; // face the court
+  scene.add(made.group);
+  return { key: def.key, ...made };
+});
 
 // ---------- Aim reticle + guide ----------
 const reticle = new THREE.Mesh(
@@ -842,8 +869,7 @@ async function startDisguise(d) {
         face.material.needsUpdate = true;
       }
       game.disguise = { as: d.key, perkId: d.perkId, label: d.label };
-      // the disguise itself buys exactly one use of the copied perk
-      game.teams[1].charges[d.perkId] = (game.teams[1].charges[d.perkId] || 0) + 1;
+      // the copied perk is still paid for with coins, at its own cost
       setMessage(`Gali is wearing ${d.key === 'happy' ? "Happy's" : d.label.split(' ')[0] + "'s"} face — use their perk!`, 4200);
       game.phase = 'aim';
       updateHUD();
@@ -1107,8 +1133,8 @@ function playDig() {
 const game = {
   phase: 'start', // start | aim-jack | aim | charging | digging | rolling | between
   teams: [
-    { name: 'Team Ofer', score: 0, charges: {}, players: ROSTERS[0].players.map((p) => ({ ...p, thrown: false })) },
-    { name: 'Team Shani', score: 0, charges: {}, players: ROSTERS[1].players.map((p) => ({ ...p, thrown: false })) },
+    { name: 'Team Ofer', score: 0, coins: 0, players: ROSTERS[0].players.map((p) => ({ ...p, thrown: false })) },
+    { name: 'Team Shani', score: 0, coins: 0, players: ROSTERS[1].players.map((p) => ({ ...p, thrown: false })) },
   ],
   current: 0,
   currentPlayer: null,
@@ -1132,6 +1158,67 @@ const game = {
 window.__game = game; // test hook
 window.__questions = QUESTIONS;
 window.__balls = balls;
+window.__smash = () => smash;
+
+// --- fast test harness -------------------------------------------------
+// Tests drive the game through this instead of waiting on real time: the
+// simulation is stepped in a tight loop, so an end takes milliseconds.
+const uiDelay = (ms) => (game.fastTest ? 5 : ms);
+const BUSY = ['smashing', 'rolling', 'magnet-pull', 'whipping', 'sniping', 'cleaning', 'disguising'];
+window.__t = {
+  fast(on = true) { game.fastTest = on; return this; },
+  step(dt = 1 / 60) { simulate(dt, performance.now() / 1000); return game.phase; },
+  // advance until the world stops moving (or the cap is hit)
+  settle(maxSeconds = 15) {
+    const dt = 1 / 60;
+    for (let i = 0; i < maxSeconds / dt; i++) {
+      simulate(dt, performance.now() / 1000 + i * dt);
+      if (!BUSY.includes(game.phase)) return game.phase;
+    }
+    return game.phase;
+  },
+  run(seconds, dt = 1 / 60) {
+    for (let i = 0; i < seconds / dt; i++) simulate(dt, performance.now() / 1000 + i * dt);
+    return game.phase;
+  },
+  // throw without the mouse: direction + power + loft straight in
+  throwAt({ power = 0.62, loft = 0.5, dirX = 0, dist = 7 } = {}) {
+    const o = throwOrigin();
+    const back = game.twinActive ? -1 : 1;
+    game.loft = loft;
+    game.power = power;
+    game.aimPoint.set(o.x + dirX, 0, o.z + dist * back);
+    throwBall();
+    return this.settle();
+  },
+  // click a trivia answer straight away
+  answer(correct = true) {
+    const q = QUESTIONS.find((x) => x.question === $('trivia-question').textContent);
+    const want = correct ? q.answers[q.correct] : q.answers.find((a, i) => i !== q.correct);
+    const btn = [...$('trivia-answers').children].find((b) => b.textContent === want);
+    btn.click();
+    return want;
+  },
+  perk(idPart) {
+    const btn = [...$('perk-bar').children]
+      .find((b) => b.classList.contains('perk-ready') && b.textContent.toLowerCase().includes(idPart));
+    if (!btn) throw new Error(`perk "${idPart}" is not ready`);
+    btn.click();
+    return game.phase;
+  },
+  state() {
+    return {
+      phase: game.phase,
+      player: game.currentPlayer?.key ?? null,
+      jack: game.throwingJack,
+      coins: game.teams.map((t) => t.coins),
+      scores: game.teams.map((t) => t.score),
+      balls: balls.length,
+      holding: currentPoints(),
+    };
+  },
+};
+// --- end test harness --------------------------------------------------
 window.__camFov = () => camera.fov;
 window.__refresh = () => updateHUD();
 window.__aimAt = (x, z) => { game.aimPoint.set(x, 0, z); reticle.position.set(x, 0.015, z); };
@@ -1166,8 +1253,7 @@ function updateHUD() {
   for (const [el, t] of [[$('score-team1'), t1], [$('score-team2'), t2]]) {
     el.querySelector('.name').textContent = t.name;
     el.querySelector('.pts').textContent = t.score;
-    const nTok = Object.values(t.charges).reduce((a, b) => a + b, 0);
-    el.querySelector('.tokens').textContent = nTok > 3 ? `🎁×${nTok}` : '🎁'.repeat(nTok);
+    el.querySelector('.tokens').textContent = t.coins ? `🪙${t.coins}` : '';
   }
   $('score-team1').classList.toggle('active', game.current === 0);
   $('score-team2').classList.toggle('active', game.current === 1);
@@ -1270,10 +1356,224 @@ function updatePlayerPicker() {
   }
 }
 
+// ---------- Golden perk: Shoshana smashes Danny (perk) ----------
+let smash = null;
+const dustPuffs = [];
+function playWhoosh() {
+  audioCtx ??= new AudioContext();
+  for (let i = 0; i < 6; i++) blip(260 + i * 120, i * 0.045, 0.1);
+}
+function playThud() {
+  audioCtx ??= new AudioContext();
+  blip(80, 0, 0.45);
+  blip(55, 0.05, 0.5);
+  for (let i = 0; i < 4; i++) blip(900 - i * 150, 0.05 + i * 0.04, 0.06); // gravel crunch
+}
+
+// Point an arm from a shoulder: a = angle from "hanging down" (0) to "straight up" (PI),
+// swinging forward (+z in the person's own frame).
+function poseArm(arm, side, shoulderY, a, len, shoulderX) {
+  arm.scale.y = len / 0.45;
+  arm.rotation.set(Math.PI - a, 0, 0);
+  arm.position.set(side * shoulderX, shoulderY - Math.cos(a) * len / 2, Math.sin(a) * len / 2);
+}
+
+function startSmash() {
+  const danny = watchers.find((w) => w.key === 'danny');
+  const shoshana = watchers.find((w) => w.key === 'shoshana');
+  danny.group.rotation.order = 'YXZ';
+  const keep = (m) => ({ m, pos: m.position.clone(), rot: m.rotation.clone(), scl: m.scale.clone() });
+  smash = {
+    t: -1.9, // the title shows first, then the action starts
+    danny, shoshana, hit: false, swooshed: false,
+    dannyHome: danny.group.position.clone(),
+    shoshanaHome: shoshana.group.position.clone(),
+    land: new THREE.Vector3((Math.random() - 0.5) * 1.4, 0.17, 6.6),
+    rest: [danny.parts.armL, danny.parts.armR, shoshana.parts.armL, shoshana.parts.armR].map(keep),
+    releasePos: new THREE.Vector3(),
+    releaseRx: 0,
+  };
+  game.phase = 'smashing';
+  camMode = 'smash';
+  reticle.visible = false;
+  bigShout('🏋️ SHOSHANA SMASHES DANNY!', 1700);
+  updateHUD();
+}
+
+function restoreSmashPose(s) {
+  for (const r of s.rest) { r.m.position.copy(r.pos); r.m.rotation.copy(r.rot); r.m.scale.copy(r.scl); }
+}
+
+function spawnDust(at) {
+  for (let i = 0; i < 16; i++) {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07 + Math.random() * 0.08, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xcdbf9d, transparent: true, opacity: 0.8 })
+    );
+    m.position.set(at.x + (Math.random() - 0.5) * 0.4, 0.1, at.z - Math.random() * 1.3);
+    const a = Math.random() * Math.PI * 2;
+    dustPuffs.push({ m, v: new THREE.Vector3(Math.cos(a) * 1.4, 0.8 + Math.random() * 1.2, Math.sin(a) * 1.4), life: 0 });
+    scene.add(m);
+  }
+}
+function updateDust(dt) {
+  for (let i = dustPuffs.length - 1; i >= 0; i--) {
+    const d = dustPuffs[i];
+    d.life += dt;
+    d.m.position.addScaledVector(d.v, dt);
+    d.v.multiplyScalar(0.94);
+    d.m.scale.multiplyScalar(1.02);
+    d.m.material.opacity = Math.max(0, 0.8 - d.life * 0.9);
+    if (d.life > 0.9) { scene.remove(d.m); dustPuffs.splice(i, 1); }
+  }
+}
+
+function smashImpact() {
+  smash.hit = true;
+  playThud();
+  camShake = 0.5;
+  spawnDust(smash.land);
+  // every ball gets a random direction, height and speed
+  for (const b of balls) {
+    const a = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 7.5;
+    b.body.wakeUp();
+    b.trapped = false;
+    b.inHole = false;
+    b.body.velocity.set(Math.cos(a) * speed, 0.5 + Math.random() * 4.5, Math.sin(a) * speed);
+    b.body.angularVelocity.set((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);
+  }
+  game.smashAfter = true;
+  game.phase = 'rolling'; // let everything settle, then the thrower carries on
+}
+
+function updateSmash(dt) {
+  const s = smash;
+  s.t += dt;
+  if (s.t < 0) return; // still showing the title
+  const { danny, shoshana } = s;
+  const g = danny.group;
+  const sh = shoshana.group;
+  const SX = 0.22 * 1.9, SY = 1.0, LEN = 0.78;
+  const T_LIFT = 0.8, T_WIND = 0.9, T_SWING = 0.5, T_FLY = 0.2, T_LIE = 1.3, T_GETUP = 1.0;
+  const t = s.t;
+
+  const dannyHang = (phi, flop) => {
+    // Danny dangles by the ankles: arms flop toward the ground, with a wobble
+    g.rotation.x = Math.PI - phi;
+    const w = Math.sin(t * 9) * 0.25 + flop;
+    danny.parts.armL.rotation.set(0, 0, Math.PI - 0.35 + w);
+    danny.parts.armR.rotation.set(0, 0, -(Math.PI - 0.35) - w);
+    for (const [arm, sx] of [[danny.parts.armL, -1], [danny.parts.armR, 1]]) {
+      arm.scale.y = 1.12; arm.position.set(sx * 0.12, 1.45, 0);
+    }
+  };
+  // Shoshana's two hands: arms track the swing; Danny's feet sit in them
+  const holdAt = (phi) => {
+    const a = Math.min(Math.PI + 0.5, Math.PI - 0.55 * phi);
+    poseArm(shoshana.parts.armL, -1, SY, a, LEN, SX);
+    poseArm(shoshana.parts.armR, 1, SY, a, LEN, SX);
+    // hands in world space (Shoshana faces -z, i.e. her +z is world -z)
+    g.position.set(sh.position.x, sh.position.y + SY - Math.cos(a) * LEN, sh.position.z - Math.sin(a) * LEN);
+  };
+
+  if (t < T_LIFT) {
+    // she scoops him up: Danny rises from his spot to her hands, flipping upside down
+    const k = t / T_LIFT, e = k * k * (3 - 2 * k);
+    holdAt(0);
+    const hands = g.position.clone();
+    g.position.lerpVectors(s.dannyHome, hands, e);
+    g.position.y += Math.sin(k * Math.PI) * 0.7;
+    dannyHang(0, 0);
+    g.rotation.x = Math.PI * e;
+    const lift = Math.PI * e; // arms rise overhead
+    poseArm(shoshana.parts.armL, -1, SY, lift * 0.95, LEN, SX);
+    poseArm(shoshana.parts.armR, 1, SY, lift * 0.95, LEN, SX);
+  } else if (t < T_LIFT + T_WIND) {
+    // wind-up: she leans back and hoists him behind her head
+    const k = (t - T_LIFT) / T_WIND, e = Math.sin(k * Math.PI / 2);
+    const phi = -0.95 * e;
+    holdAt(phi);
+    dannyHang(phi, 0.1);
+    sh.position.z = s.shoshanaHome.z + 0.3 * e;
+    if (!s.swooshed && k > 0.85) { s.swooshed = true; playWhoosh(); }
+  } else if (t < T_LIFT + T_WIND + T_SWING) {
+    // the downswing: arms whip forward, Danny streams after them
+    const k = (t - T_LIFT - T_WIND) / T_SWING, e = k * k;
+    const phi = -0.95 + e * 2.0; // -0.95 -> +1.05
+    holdAt(phi);
+    dannyHang(phi, -0.2);
+    sh.position.z = s.shoshanaHome.z + 0.3 - 0.55 * e;
+    s.releasePos.copy(g.position);
+    s.releaseRx = g.rotation.x;
+  } else if (t < T_LIFT + T_WIND + T_SWING + T_FLY) {
+    // let go — he sails the last stretch and lands flat on his belly
+    const k = (t - T_LIFT - T_WIND - T_SWING) / T_FLY;
+    g.position.lerpVectors(s.releasePos, s.land, k);
+    g.position.y += Math.sin(k * Math.PI) * 0.35;
+    g.rotation.x = THREE.MathUtils.lerp(s.releaseRx, Math.PI / 2, k);
+    sh.position.z = s.shoshanaHome.z - 0.55;
+    poseArm(shoshana.parts.armL, -1, SY, 1.0, LEN, SX);
+    poseArm(shoshana.parts.armR, 1, SY, 1.0, LEN, SX);
+  } else if (t < T_LIFT + T_WIND + T_SWING + T_FLY + T_LIE) {
+    if (!s.hit) {
+      g.position.copy(s.land);
+      g.rotation.x = Math.PI / 2;
+      smashImpact();
+    }
+    // sprawled: arms flung out, Shoshana dusts her hands
+    const k = (t - T_LIFT - T_WIND - T_SWING - T_FLY) / T_LIE;
+    danny.parts.armL.rotation.set(0, 0, 1.4);
+    danny.parts.armR.rotation.set(0, 0, -1.4);
+    danny.parts.armL.scale.y = danny.parts.armR.scale.y = 1.12;
+    danny.parts.armL.position.set(-0.22, 1.0, 0);
+    danny.parts.armR.position.set(0.22, 1.0, 0);
+    g.position.y = 0.17 + Math.max(0, 0.08 * Math.sin(k * 25)) * (1 - k); // bounce
+    sh.position.z = THREE.MathUtils.lerp(s.shoshanaHome.z - 0.55, s.shoshanaHome.z, Math.min(1, k * 2));
+    restoreArmsOf(shoshana, s);
+  } else if (t < T_LIFT + T_WIND + T_SWING + T_FLY + T_LIE + T_GETUP) {
+    // he peels himself up and shuffles home
+    const k = (t - (T_LIFT + T_WIND + T_SWING + T_FLY + T_LIE)) / T_GETUP, e = k * k * (3 - 2 * k);
+    g.rotation.x = THREE.MathUtils.lerp(Math.PI / 2, 0, e);
+    g.position.lerpVectors(s.land, s.dannyHome, e);
+    g.position.y = THREE.MathUtils.lerp(0.17, 0, e);
+    restoreArmsOf(danny, s);
+  } else {
+    g.position.copy(s.dannyHome);
+    g.rotation.x = 0;
+    sh.position.copy(s.shoshanaHome);
+    restoreSmashPose(s);
+    smash = null;
+  }
+}
+function restoreArmsOf(w, s) {
+  for (const r of s.rest) {
+    if (r.m === w.parts.armL || r.m === w.parts.armR) { r.m.position.copy(r.pos); r.m.rotation.copy(r.rot); r.m.scale.copy(r.scl); }
+  }
+}
+
+// after the smash, rescue anything that flew out of the court
+function rescueBalls() {
+  for (const b of balls) {
+    const p = b.body.position;
+    const mx = COURT.width / 2 - 0.12, mz = COURT.length / 2 - 0.12;
+    if (Math.abs(p.x) > mx || Math.abs(p.z) > mz || p.y < 0) {
+      p.x = THREE.MathUtils.clamp(p.x, -mx, mx);
+      p.z = THREE.MathUtils.clamp(p.z, -mz, mz);
+      p.y = b.r;
+      b.body.velocity.set(0, 0, 0);
+      b.body.angularVelocity.set(0, 0, 0);
+    }
+  }
+}
+
+const COIN_PER_ANSWER = 1; // coins a team wins for a correct trivia answer
+
 // Perk panel — always visible during play; each perk shows ready / locked state
 const PERKS = [
   {
     id: 'tsiktsuk',
+    cost: 1,          // coins to fire it — tune per perk
     team: 0,
     title: '📢 Yariv: tsiktsuk!',
     hint: "usable when GALI throws — wrecks her aim",
@@ -1290,6 +1590,7 @@ const PERKS = [
   },
   {
     id: 'twin',
+    cost: 1,          // coins to fire it — tune per perk
     team: 0,
     title: '👯 Eden: duplicate to Amit!',
     hint: "usable on EDEN's turn — throw from the far side",
@@ -1304,6 +1605,7 @@ const PERKS = [
   },
   {
     id: 'whip',
+    cost: 1,          // coins to fire it — tune per perk
     team: 0,
     title: '🪢 Ofer: whip a boule away!',
     hint: "usable on OFER's turn — steal a ball off the court, then throw twice",
@@ -1317,6 +1619,7 @@ const PERKS = [
   },
   {
     id: 'disguise',
+    cost: 1,          // coins to fire it — tune per perk
     team: 1,
     title: '🎭 Gali: disguise as someone!',
     hint: "usable on GALI's turn — wear their face and use their perk",
@@ -1325,6 +1628,7 @@ const PERKS = [
   },
   {
     id: 'sniper',
+    cost: 1,          // coins to fire it — tune per perk
     team: 0,
     title: '🎯 Yariv: snipe a boule!',
     hint: "usable on YARIV's turn — shoot a ball off the court, he still throws after",
@@ -1339,6 +1643,7 @@ const PERKS = [
   },
   {
     id: 'magnet',
+    cost: 1,          // coins to fire it — tune per perk
     team: 1,
     title: '🧲 Ori: throw the magnet boule!',
     hint: "usable on ORI's turn — his boule drags every ball toward it",
@@ -1350,7 +1655,18 @@ const PERKS = [
     },
   },
   {
+    id: 'smash',
+    golden: true,
+    cost: 3,
+    team: 'current',
+    title: '🏆 GOLDEN: Shoshana smashes Danny!',
+    hint: 'usable on anyone\'s turn — scatters EVERY ball, thrower still throws',
+    usable: () => game.phase === 'aim' && !game.throwingJack && balls.length > 0 && !smash,
+    activate: () => startSmash(),
+  },
+  {
     id: 'cleaner',
+    cost: 1,          // coins to fire it — tune per perk
     team: 0,
     title: '🤖 Mom: start the robot cleaner!',
     hint: "usable on MOM's turn — sweeps a column, she still throws after",
@@ -1363,6 +1679,7 @@ const PERKS = [
   },
   {
     id: 'dig',
+    cost: 1,          // coins to fire it — tune per perk
     team: 1,
     title: '🐾 Happy: dig a hole!',
     hint: "usable on HAPPY's turn — sucks in balls, she still throws after",
@@ -1381,8 +1698,10 @@ function actingAs(key) {
 }
 // a copied perk is paid for by Gali's own team
 const perkTeam = (perk) =>
+  perk.team === 'current' ? game.teams[game.current] :
   game.disguise && perk.id === game.disguise.perkId ? game.teams[1] : game.teams[perk.team];
-const chargesOf = (perk) => perkTeam(perk).charges[perk.id] || 0;
+const perkCost = (perk) => perk.cost ?? 1;
+const canAfford = (perk) => perkTeam(perk).coins >= perkCost(perk);
 
 function updatePerkBar() {
   const bar = $('perk-bar');
@@ -1391,25 +1710,24 @@ function updatePerkBar() {
 
   // By default only perks you can actually fire right now are shown, so the
   // screen stays clear (and fits a phone). The chip opens the full list.
-  const ready = PERKS.filter((p) => chargesOf(p) > 0 && p.usable());
-  const owned = PERKS.reduce((a, p) => a + chargesOf(p), 0);
+  const ready = PERKS.filter((p) => canAfford(p) && p.usable());
   const list = game.perksOpen ? PERKS : ready;
 
   for (const perk of list) {
     const team = perkTeam(perk);
-    const n = chargesOf(perk);
-    const ready = n > 0 && perk.usable();
+    const cost = perkCost(perk);
+    const ready = canAfford(perk) && perk.usable();
     const b = document.createElement('button');
-    b.className = ready ? 'perk-ready' : 'perk-locked';
+    b.className = (ready ? 'perk-ready' : 'perk-locked') + (perk.golden ? ' perk-golden' : '');
     b.disabled = !ready;
     b.innerHTML = ready
-      ? `<span class="perk-title">${perk.title} — GO!</span>` +
-        `<span class="perk-sub">${team.name} 🎁×${n} · ${perk.hint}</span>`
+      ? `<span class="perk-title">${perk.title} — GO! (🪙${cost})</span>` +
+        `<span class="perk-sub">${team.name} has 🪙${team.coins} · ${perk.hint}</span>`
       : `<span class="perk-title">${perk.title}</span>` +
-        `<span class="perk-sub">${n ? '🎁×' + n : 'no 🎁'} · ${perk.hint.split('—')[0].trim()}</span>`;
+        `<span class="perk-sub">🪙${cost}${canAfford(perk) ? '' : ` · ${team.name} has 🪙${team.coins}`} · ${perk.hint.split('—')[0].trim()}</span>`;
     if (ready) b.onclick = (e) => {
       e.stopPropagation();
-      team.charges[perk.id]--;
+      team.coins -= cost;
       const borrowed = game.disguise && perk.id === game.disguise.perkId;
       perk.activate();
       // the borrowed perk is spent — Gali takes the mask off again
@@ -1423,9 +1741,10 @@ function updatePerkBar() {
   const chip = document.createElement('button');
   chip.className = 'perk-toggle';
   bar.classList.toggle('open', !!game.perksOpen);
+  const coins = game.teams[game.current]?.coins ?? 0;
   chip.textContent = game.perksOpen
     ? '✕ close perks'
-    : `🎁 perks${owned ? ` ×${owned}` : ''}${ready.length ? '' : ' — none ready'}`;
+    : `🪙${coins} perks${ready.length ? ` · ${ready.length} ready!` : ''}`;
   chip.onclick = (e) => {
     e.stopPropagation();
     game.perksOpen = !game.perksOpen;
@@ -1622,7 +1941,18 @@ function checkSettled(dt) {
 }
 
 function onBallsSettled() {
+  if (game.smashAfter) {
+    if (smash) return; // no throwing until Danny and Shoshana are done
+    game.smashAfter = false;
+    camMode = 'near';
+    rescueBalls();
+    game.phase = 'aim';
+    setMessage('Shoshana flattened the court — and the thrower still throws!', 3500);
+    updateHUD();
+    return;
+  }
   if (game.twinActive) { game.twinActive = false; camMode = 'near'; dismissAmit(); }
+  if (camMode === 'smash') camMode = 'near';
   if (game.throwingJack) return onJackSettled();
   if (game.pendingMagnet) {
     const mb = game.pendingMagnet;
@@ -1779,7 +2109,7 @@ function showWin(winner) {
   game.phase = 'between';
   $('replay-btn').onclick = () => {
     hide('win-screen');
-    game.teams.forEach((t) => { t.score = 0; t.charges = {}; });
+    game.teams.forEach((t) => { t.score = 0; t.coins = 0; });
     game.usedQuestions.clear();
     startEnd(Math.round(Math.random()));
   };
@@ -1817,38 +2147,18 @@ function askTrivia(teamIdx, done) {
       const ok = i === q.correct;
       btn.classList.add(ok ? 'correct' : 'wrong');
       if (!ok) buttonFor[q.correct].classList.add('correct');
+      const team = game.teams[teamIdx];
+      if (ok) team.coins += COIN_PER_ANSWER;
       const res = $('trivia-result');
       res.textContent = ok
-        ? '🎁 Correct! Now choose your perk...'
-        : 'Oops — no perk this time!';
+        ? `🪙 Correct! +${COIN_PER_ANSWER} coin — ${team.name} now has ${team.coins}. ` +
+          'Coins keep until you spend them on a perk.'
+        : 'Oops — no coin this time!';
       res.classList.remove('hidden');
-      if (ok) setTimeout(() => showPerkChooser(teamIdx, done), 1300);
-      else setTimeout(() => { hide('trivia-screen'); done(); }, 1800);
+      setTimeout(() => { hide('trivia-screen'); done(); }, uiDelay(ok ? 2600 : 1800));
     };
     box.appendChild(btn);
   });
-  show('trivia-screen');
-}
-
-function showPerkChooser(teamIdx, done) {
-  const team = game.teams[teamIdx];
-  $('trivia-team').textContent = team.name;
-  $('trivia-question').textContent = '🎁 Choose your perk!';
-  $('trivia-result').classList.add('hidden');
-  $('trivia-image').classList.add('hidden');
-  const box = $('trivia-answers');
-  box.innerHTML = '';
-  for (const perk of PERKS.filter((p) => p.team === teamIdx)) {
-    const b = document.createElement('button');
-    b.innerHTML = `${perk.title}<br/><small>${perk.hint}</small>`;
-    b.onclick = () => {
-      team.charges[perk.id] = (team.charges[perk.id] || 0) + 1;
-      hide('trivia-screen');
-      setMessage(`${team.name} banked: ${perk.title} — watch for it glowing green bottom-right!`, 4000);
-      done();
-    };
-    box.appendChild(b);
-  }
   show('trivia-screen');
 }
 
@@ -1910,8 +2220,8 @@ $('start-btn').onclick = () => {
   game.teams[0].name = $('team1-name').value.trim() || 'Team Ofer';
   game.teams[1].name = $('team2-name').value.trim() || 'Team Shani';
   if ($('test-mode').checked) {
-    // every perk, 5 charges each, so all of them can be tried immediately
-    for (const perk of PERKS) game.teams[perk.team].charges[perk.id] = 5;
+    // plenty of coins so every perk can be tried immediately
+    game.teams.forEach((t) => (t.coins = 20));
   }
   hide('start-screen');
   show('hud');
@@ -1924,62 +2234,9 @@ $('start-btn').onclick = () => {
 
 // ---------- Main loop ----------
 const clock = new THREE.Clock();
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  const t = performance.now() / 1000;
-
-  // camera glide
-  const cam = CAMS[camMode];
-  camera.position.lerp(cam.pos, 0.06);
-  camLook.lerp(cam.look, 0.06);
-  camera.lookAt(camLook);
-
-  // aiming
-  if (['aim', 'aim-jack', 'charging', 'digging', 'cleaner-aim', 'whip-aim', 'sniper-aim'].includes(game.phase)) {
-    raycaster.setFromCamera(mouse, camera);
-    const hit = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-      hit.x = THREE.MathUtils.clamp(hit.x, -COURT.width / 2 + 0.2, COURT.width / 2 - 0.2);
-      const zMin = THROW_Z + 2;
-      const zMax = game.twinActive ? FAR_THROW_Z - 2 : COURT.length / 2 - 0.3;
-      hit.z = THREE.MathUtils.clamp(hit.z, zMin, zMax);
-
-      const throwing = ['aim', 'aim-jack', 'charging'].includes(game.phase);
-      if (throwing) {
-        // Mouse sideways = direction. Mouse near/far from the thrower = arc:
-        // close in gives a flat roll, pushing it up the court lifts the lob.
-        const o = throwOrigin();
-        const back = game.twinActive ? -1 : 1; // the twin throws the other way
-        let dx = hit.x - o.x;
-        let dz = Math.max((hit.z - o.z) * back, 0.9) * back;
-        const dist = Math.hypot(dx, dz);
-        // near the thrower = high lob that drops short; far up the court =
-        // flat throw that carries, which is how you'd actually play the shot
-        const k = THREE.MathUtils.clamp((dist - AIM_NEAR) / (AIM_FAR - AIM_NEAR), 0, 1);
-        game.loft = LOFT_MAX - k * (LOFT_MAX - LOFT_MIN);
-        updateArcPanel();
-        // the marker stays at a fixed short radius — it shows angle and side,
-        // not where the boule will land
-        dx /= dist; dz /= dist;
-        game.aimPoint.set(o.x + dx * AIM_RADIUS, 0, o.z + dz * AIM_RADIUS);
-        reticle.position.set(game.aimPoint.x, 0.015, game.aimPoint.z);
-      } else {
-        game.aimPoint.copy(hit);
-        reticle.position.set(hit.x, 0.015, hit.z);
-      }
-    }
-  }
-
-  if (game.phase === 'charging') {
-    game.powerT += dt;
-    const pt = (game.powerT * 0.9) % 2;
-    game.power = pt < 1 ? pt : 2 - pt;
-    $('power-fill').style.width = `${game.power * 100}%`;
-  }
-  updateGuide(); // angle tracer follows the mouse the whole time you're aiming
-  updateHolding(); // live "who holds the point" readout
-
+// Everything that advances the game world by dt. Split out of the render
+// loop so tests can run it as fast as the CPU allows (see window.__t).
+function simulate(dt, t) {
   // physics — skip stepping entirely once every ball sleeps
   if (balls.length) {
     const anyAwake = balls.some((b) => b.body.sleepState !== CANNON.Body.SLEEPING)
@@ -2039,6 +2296,8 @@ function animate() {
     if (game.phase === 'rolling') checkSettled(dt);
   }
 
+  if (smash) updateSmash(dt);
+  if (dustPuffs.length) updateDust(dt);
   if (whip) updateWhip(dt);
   if (snipe) updateSnipe(dt);
   if (maskAnim) updateMaskAnim(dt);
@@ -2057,6 +2316,70 @@ function animate() {
     cleaner.mesh.rotation.y += dt * 3;
     if (cleaner.body.position.z > COURT.length / 2 - 0.3) finishCleaner();
   }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = performance.now() / 1000;
+
+  // camera glide
+  const cam = CAMS[camMode];
+  camera.position.lerp(cam.pos, 0.06);
+  camLook.lerp(cam.look, 0.06);
+  camera.lookAt(camLook);
+  if (camShake > 0.001) {
+    camera.position.x += (Math.random() - 0.5) * camShake;
+    camera.position.y += (Math.random() - 0.5) * camShake;
+    camShake *= 0.9;
+  }
+
+  // aiming
+  if (['aim', 'aim-jack', 'charging', 'digging', 'cleaner-aim', 'whip-aim', 'sniper-aim'].includes(game.phase)) {
+    raycaster.setFromCamera(mouse, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+      hit.x = THREE.MathUtils.clamp(hit.x, -COURT.width / 2 + 0.2, COURT.width / 2 - 0.2);
+      const zMin = THROW_Z + 2;
+      const zMax = game.twinActive ? FAR_THROW_Z - 2 : COURT.length / 2 - 0.3;
+      hit.z = THREE.MathUtils.clamp(hit.z, zMin, zMax);
+
+      const throwing = ['aim', 'aim-jack', 'charging'].includes(game.phase);
+      if (throwing) {
+        // Mouse sideways = direction. Mouse near/far from the thrower = arc:
+        // close in gives a flat roll, pushing it up the court lifts the lob.
+        const o = throwOrigin();
+        const back = game.twinActive ? -1 : 1; // the twin throws the other way
+        let dx = hit.x - o.x;
+        let dz = Math.max((hit.z - o.z) * back, 0.9) * back;
+        const dist = Math.hypot(dx, dz);
+        // near the thrower = high lob that drops short; far up the court =
+        // flat throw that carries, which is how you'd actually play the shot
+        const k = THREE.MathUtils.clamp((dist - AIM_NEAR) / (AIM_FAR - AIM_NEAR), 0, 1);
+        game.loft = LOFT_MAX - k * (LOFT_MAX - LOFT_MIN);
+        updateArcPanel();
+        // the marker stays at a fixed short radius — it shows angle and side,
+        // not where the boule will land
+        dx /= dist; dz /= dist;
+        game.aimPoint.set(o.x + dx * AIM_RADIUS, 0, o.z + dz * AIM_RADIUS);
+        reticle.position.set(game.aimPoint.x, 0.015, game.aimPoint.z);
+      } else {
+        game.aimPoint.copy(hit);
+        reticle.position.set(hit.x, 0.015, hit.z);
+      }
+    }
+  }
+
+  if (game.phase === 'charging') {
+    game.powerT += dt;
+    const pt = (game.powerT * 0.9) % 2;
+    game.power = pt < 1 ? pt : 2 - pt;
+    $('power-fill').style.width = `${game.power * 100}%`;
+  }
+  updateGuide(); // angle tracer follows the mouse the whole time you're aiming
+  updateHolding(); // live "who holds the point" readout
+
+  simulate(dt, t);
 
   // characters: glide to targets + idle/special animations
   for (const c of characters) {

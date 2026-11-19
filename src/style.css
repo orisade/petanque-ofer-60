@@ -219,6 +219,17 @@ body {
   from { box-shadow: 0 0 4px rgba(127, 232, 138, 0.5); }
   to { box-shadow: 0 0 22px rgba(127, 232, 138, 1); }
 }
+#perk-bar button.perk-golden.perk-ready {
+  background: linear-gradient(135deg, #b8860b, #ffd84a 50%, #b8860b); color: #3a2600;
+  border: 2px solid #fff3b0;
+  animation: goldpulse 0.7s infinite alternate;
+}
+#perk-bar button.perk-golden.perk-ready:hover { filter: brightness(1.1); }
+#perk-bar button.perk-golden.perk-locked { border-color: rgba(255, 216, 74, 0.6); color: #e8c766; }
+@keyframes goldpulse {
+  from { box-shadow: 0 0 6px rgba(255, 216, 74, 0.6); }
+  to { box-shadow: 0 0 26px rgba(255, 216, 74, 1); }
+}
 #perk-bar button.perk-toggle {
   align-self: flex-end;
   flex-direction: row;
